@@ -5,16 +5,19 @@ import matplotlib.pyplot as plt
 import os
 import tensorflow as tf
 
-def get_adjmat(mat, input_tokens):
-    n_layers, length, _ = mat.shape
-    adj_mat = np.zeros(((n_layers+1)*length, (n_layers+1)*length))
+
+def get_adjmat(mat:np.ndarray, input_tokens:list):
+    n_layers, length, _ = mat.shape # mat of shape (num_layers, length, length)
+    adj_mat = np.zeros(((n_layers+1)*length, (n_layers+1)*length)) # include the input layer
     labels_to_index = {}
     for k in np.arange(length):
         labels_to_index[str(k)+"_"+input_tokens[k]] = k
 
+    # the row node is one layer above the column node because the graph is directed from output to input
+    # labels_to_index is a dictionary mapping from the node label to the index in the adjacency matrix
     for i in np.arange(1,n_layers+1):
         for k_f in np.arange(length):
-            index_from = (i)*length+k_f
+            index_from = i*length+k_f
             label = "L"+str(i)+"_"+str(k_f)
             labels_to_index[label] = index_from
             for k_t in np.arange(length):
@@ -26,7 +29,7 @@ def get_adjmat(mat, input_tokens):
 
 def draw_attention_graph(adjmat, labels_to_index, n_layers, length):
     A = adjmat
-    G=nx.from_numpy_matrix(A, create_using=nx.DiGraph())
+    G=nx.from_numpy_array(A, create_using=nx.DiGraph())
     for i in np.arange(A.shape[0]):
         for j in np.arange(A.shape[1]):
             nx.set_edge_attributes(G, {(i,j): A[i,j]}, 'capacity')
@@ -68,10 +71,12 @@ def draw_attention_graph(adjmat, labels_to_index, n_layers, length):
         nx.draw_networkx_edges(G,pos,edgelist=weighted_edges,width=width, edge_color='darkblue')
     
     return G
-    
-def compute_flows(G, labels_to_index, input_nodes, length):
-    number_of_nodes = len(labels_to_index)
-    flow_values=np.zeros((number_of_nodes,number_of_nodes))
+
+
+def compute_flows(G:nx.DiGraph, labels_to_index:dict, input_nodes:list, length:int):
+    # input_nodes is a list of node key names that are the input to the graph, and it is generated from labels_to_index.
+    number_of_nodes = len(labels_to_index) # number of nodes in the graph, including input nodes
+    flow_values = np.zeros((number_of_nodes,number_of_nodes)) # same shape as the adjacency matrix
     for key in labels_to_index:
         if key not in input_nodes:
             current_layer = int(labels_to_index[key] / length)
@@ -79,11 +84,14 @@ def compute_flows(G, labels_to_index, input_nodes, length):
             u = labels_to_index[key]
             for inp_node_key in input_nodes:
                 v = labels_to_index[inp_node_key]
+                # u is the source node, v is the target node(input node)
+                # compute the flow value from u to v
                 flow_value = nx.maximum_flow_value(G,u,v, flow_func=nx.algorithms.flow.edmonds_karp)
-                flow_values[u][pre_layer*length+v ] = flow_value
+                flow_values[u][pre_layer*length+v] = flow_value
             flow_values[u] /= flow_values[u].sum()
             
     return flow_values
+
 
 def compute_node_flow(G, labels_to_index, input_nodes, output_nodes,length):
     number_of_nodes = len(labels_to_index)
@@ -102,7 +110,9 @@ def compute_node_flow(G, labels_to_index, input_nodes, output_nodes,length):
     return flow_values
 
 def compute_joint_attention(att_mat, add_residual=True):
+    # attention rollout algorithm
     if add_residual:
+        # add residual attention to the attention matrix for each layer, and normalize each row to sum to 1
         residual_att = np.eye(att_mat.shape[1])[None,...]
         aug_att_mat = att_mat + residual_att
         aug_att_mat = aug_att_mat / aug_att_mat.sum(axis=-1)[...,None]
